@@ -105,13 +105,25 @@ class AutoKaraoke:
         
         return lines
 
-    def draw_text_centered(self, draw, text, y, font, fill, alpha=255):
-        color = tuple(int(c * alpha / 255) for c in fill)
+    def draw_text_centered(self, draw, text, y, font, fill, alpha=255, has_background=False):
+        if has_background:
+            # Sử dụng RGBA với alpha channel cho overlay
+            if len(fill) == 3:  # RGB
+                color = fill + (alpha,)  # Thêm alpha channel
+            else:  # RGBA
+                color = fill[:3] + (alpha,)  # Ghi đè alpha
+            stroke_color = (0, 0, 0, 255)  # Stroke đen hoàn toàn
+        else:
+            # Sử dụng RGB bình thường cho nền gradient
+            color = tuple(int(c * alpha / 255) for c in fill)
+            stroke_color = self.stroke_color
+        
         w = draw.textlength(text, font=font)
-        draw.text(((WIDTH - w) // 2, y), text, font=font, fill=color,
-                  stroke_width=self.stroke_width, stroke_fill=self.stroke_color)
+        x = (WIDTH - w) // 2
+        draw.text((x, y), text, font=font, fill=color,
+                  stroke_width=self.stroke_width, stroke_fill=stroke_color)
 
-    def draw_karaoke_line(self, draw, text, start_time, duration, current_t, y, font, alpha=255):
+    def draw_karaoke_line(self, draw, text, start_time, duration, current_t, y, font, alpha=255, has_background=False):
         """Vẽ một dòng karaoke với hiệu ứng từng từ"""
         elapsed = current_t - start_time
         ratio = np.clip(elapsed / duration, 0, 1)
@@ -123,18 +135,27 @@ class AutoKaraoke:
         w_full = draw.textlength(text, font=font)
         x = (WIDTH - w_full) // 2
         
+        if has_background:
+            # Cho overlay: sử dụng RGBA
+            sung_color = self.text_color_sung + (alpha,)
+            remain_color = self.text_color_default + (alpha,)
+            stroke_color = (0, 0, 0, 255)
+        else:
+            # Cho nền gradient: sử dụng RGB
+            sung_color = tuple(int(c * alpha / 255) for c in self.text_color_sung)
+            remain_color = tuple(int(c * alpha / 255) for c in self.text_color_default)
+            stroke_color = self.stroke_color
+        
         # Vẽ phần đã hát (màu vàng)
         if sung_text:
-            sung_color = tuple(int(c * alpha / 255) for c in self.text_color_sung)
             draw.text((x, y), sung_text, font=font, fill=sung_color,
-                      stroke_width=self.stroke_width, stroke_fill=self.stroke_color)
+                      stroke_width=self.stroke_width, stroke_fill=stroke_color)
         
         # Vẽ phần chưa hát (màu trắng)
         if remaining_text:
             x_offset = draw.textlength(sung_text, font=font) if sung_text else 0
-            remain_color = tuple(int(c * alpha / 255) for c in self.text_color_default)
             draw.text((x + x_offset, y), remaining_text, font=font, fill=remain_color,
-                      stroke_width=self.stroke_width, stroke_fill=self.stroke_color)
+                      stroke_width=self.stroke_width, stroke_fill=stroke_color)
 
     def get_animation_alpha(self, progress):
         """Tính toán độ trong suốt cho animation mượt mà"""
@@ -147,8 +168,22 @@ class AutoKaraoke:
             smooth_progress = progress * progress * (3 - 2 * progress)  # smoothstep
             return int(255 * smooth_progress)
 
-    def make_frame(self, t, lines, start_sing):
-        img = Image.new("RGB", (WIDTH, HEIGHT), (0, 0, 0))
+    def make_frame(self, t, lines, start_sing, has_background=False):
+        if has_background:
+            # Nếu có ảnh nền, tạo frame trong suốt chỉ có text
+            img = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))  # Hoàn toàn trong suốt
+        else:
+            # Nếu không có ảnh nền, tạo frame với gradient background
+            img = Image.new("RGB", (WIDTH, HEIGHT), (0, 0, 0))
+            # Vẽ nền gradient đẹp
+            pixels = img.load()
+            for y in range(HEIGHT):
+                r = int(10 + 30 * (y / HEIGHT))
+                g = int(10 + 30 * (y / HEIGHT)) 
+                b = int(20 + 60 * (y / HEIGHT))
+                for x in range(WIDTH):
+                    pixels[x, y] = (r, g, b)
+        
         draw = ImageDraw.Draw(img)
 
         try:
@@ -171,12 +206,19 @@ class AutoKaraoke:
                     dots.append("○")
             
             dots_text = "  ".join(dots)
-            self.draw_text_centered(draw, dots_text, HEIGHT // 2 - 100, font, (255, 255, 255), dots_alpha)
+            self.draw_text_centered(draw, dots_text, HEIGHT // 2 - 100, font, (255, 255, 255), dots_alpha, has_background)
             
             # Hiển thị câu đầu tiên mờ mờ
             if lines and not lines[0].get("is_break"):
-                self.draw_text_centered(draw, lines[0]["text"], HEIGHT // 2, font, (180, 180, 180), 180)
-            return np.array(img)
+                self.draw_text_centered(draw, lines[0]["text"], HEIGHT // 2, font, (255, 255, 255), 180, has_background)
+            
+            if has_background:
+                # Chuyển RGBA sang RGB với nền đen cho phần trong suốt
+                rgb_img = Image.new("RGB", (WIDTH, HEIGHT), (0, 0, 0))
+                rgb_img.paste(img, mask=img)
+                return np.array(rgb_img)
+            else:
+                return np.array(img)
 
         # Tìm dòng đang được hát hiện tại
         current_idx = None
@@ -201,8 +243,14 @@ class AutoKaraoke:
                         dots.append("○")
                 
                 dots_text = "  ".join(dots)
-                self.draw_text_centered(draw, dots_text, HEIGHT // 2, font, (255, 255, 0), 255)
-                return np.array(img)
+                self.draw_text_centered(draw, dots_text, HEIGHT // 2, font, (255, 255, 0), 255, has_background)
+                
+                if has_background:
+                    rgb_img = Image.new("RGB", (WIDTH, HEIGHT), (0, 0, 0))
+                    rgb_img.paste(img, mask=img)
+                    return np.array(rgb_img)
+                else:
+                    return np.array(img)
             
             # *** LOGIC KARAOKE 2 DÒNG CỐ ĐỊNH ***
             
@@ -212,12 +260,12 @@ class AutoKaraoke:
                 if not prev_line.get("is_break"):
                     # Hiển thị câu trước đã hát xong (màu mờ hơn)
                     self.draw_text_centered(draw, prev_line["text"], self.line1_y, font, 
-                                            (150, 150, 150), 200)
+                                            (200, 200, 200), 200, has_background)
             
             # Dòng 2: Câu đang hát hiện tại với hiệu ứng karaoke
             line_duration = current_line["end"] - current_line["start"]
             self.draw_karaoke_line(draw, current_line["text"], current_line["start"], 
-                                   line_duration, t, self.line2_y, font, 255)
+                                   line_duration, t, self.line2_y, font, 255, has_background)
             
             # Nếu gần hết câu hiện tại, chuẩn bị hiệu ứng chuyển sang câu tiếp theo
             remain_time = current_line["end"] - t
@@ -226,12 +274,12 @@ class AutoKaraoke:
                 if not next_line.get("is_break"):
                     # Hiển thị preview câu tiếp theo (fade in từ từ)
                     fade_progress = (1.5 - remain_time) / 1.5
-                    preview_alpha = int(100 * fade_progress)  # Alpha thấp cho preview
+                    preview_alpha = int(120 * fade_progress)  # Alpha thấp cho preview
                     
                     # Hiển thị ở vị trí tạm thời (dưới dòng 2)
                     preview_y = self.line2_y + 80
                     self.draw_text_centered(draw, next_line["text"], preview_y, font, 
-                                            (200, 200, 200), preview_alpha)
+                                            (180, 180, 180), preview_alpha, has_background)
         
         else:
             # Tìm câu sắp được hát (trong vòng 3 giây tới)
@@ -247,56 +295,85 @@ class AutoKaraoke:
                     # Hiển thị câu sắp tới với fade in
                     time_until_start = upcoming_line["start"] - t
                     fade_progress = (3 - time_until_start) / 3
-                    alpha = int(150 * fade_progress)
+                    alpha = int(200 * fade_progress)
                     
                     self.draw_text_centered(draw, upcoming_line["text"], self.line2_y, font, 
-                                            self.text_color_default, alpha)
+                                            (255, 255, 255), alpha, has_background)
             else:
                 # Không có câu nào sắp tới, hiển thị 3 chấm chờ
                 dots_text = "●  ●  ●"
-                self.draw_text_centered(draw, dots_text, HEIGHT // 2, font, (255, 255, 255), 255)
+                self.draw_text_centered(draw, dots_text, HEIGHT // 2, font, (255, 255, 255), 255, has_background)
 
-        return np.array(img)
+        # Xử lý final output
+        if has_background:
+            # Chuyển RGBA sang RGB để tương thích với MoviePy
+            rgb_img = Image.new("RGB", (WIDTH, HEIGHT), (0, 0, 0))
+            rgb_img.paste(img, mask=img)
+            return np.array(rgb_img)
+        else:
+            return np.array(img)
 
     def make_video(self, whisper_words, duration):
         lyrics_data = self.load_lyrics()
         lines = self.build_lines(whisper_words, lyrics_data)
         start_sing = self.find_first_sing_time(whisper_words)
-        total_dur = duration + PRE_SHOW_TIME + 3
-
+        
+        # Sử dụng duration của file nhạc làm chuẩn
+        total_dur = duration
+        
         print(f"🎬 Render video trong {total_dur:.1f}s (bắt đầu hát tại {start_sing:.2f}s)…")
-        video = VideoClip(lambda t: self.make_frame(t, lines, start_sing), duration=total_dur)
-
-        # Kiểm tra và gắn file nhạc nền
-        if os.path.exists(self.nhac_wav):
+        
+        # Kiểm tra ảnh nền trước
+        has_background = self.bg_image and os.path.exists(self.bg_image)
+        
+        # Tạo video karaoke chính với logic khác nhau tùy có ảnh nền hay không
+        karaoke_video = VideoClip(lambda t: self.make_frame(t, lines, start_sing, has_background), duration=total_dur)
+        
+        # Xử lý ảnh nền
+        final_video = karaoke_video
+        if has_background:
             try:
-                audio = AudioFileClip(self.nhac_wav)
-                video = video.set_audio(audio)
-                print(f"✅ Đã gắn nhạc nền: {self.nhac_wav}")
-            except Exception as e:
-                print(f"⚠️ Lỗi khi gắn nhạc nền: {e}")
-        else:
-            print(f"⚠️ Không tìm thấy file nhạc: {self.nhac_wav}")
-
-        # Kiểm tra và gắn ảnh nền
-        if self.bg_image and os.path.exists(self.bg_image):
-            try:
-                bg = ImageClip(self.bg_image).set_duration(total_dur).resize((WIDTH, HEIGHT))
-                video = CompositeVideoClip([bg, video])
-                print(f"✅ Đã gắn ảnh nền: {self.bg_image}")
+                print(f"🖼️ Đang xử lý ảnh nền: {self.bg_image}")
+                # Tạo clip ảnh nền
+                bg_clip = ImageClip(self.bg_image, duration=total_dur).resize((WIDTH, HEIGHT))
+                
+                # Composite: ảnh nền ở dưới, karaoke text ở trên
+                final_video = CompositeVideoClip([bg_clip, karaoke_video])
+                print(f"✅ Đã gắn ảnh nền thành công")
             except Exception as e:
                 print(f"⚠️ Lỗi khi gắn ảnh nền: {e}")
+                final_video = karaoke_video
         else:
             print(f"⚠️ Không tìm thấy ảnh nền: {self.bg_image}")
+        
+        # Xử lý âm thanh
+        if os.path.exists(self.nhac_wav):
+            try:
+                print(f"🎵 Đang xử lý âm thanh: {self.nhac_wav}")
+                audio = AudioFileClip(self.nhac_wav)
+                
+                # Cắt audio nếu dài hơn video
+                if audio.duration > total_dur:
+                    audio = audio.subclip(0, total_dur)
+                
+                final_video = final_video.set_audio(audio)
+                print(f"✅ Đã gắn âm thanh thành công (duration: {audio.duration:.1f}s)")
+            except Exception as e:
+                print(f"⚠️ Lỗi khi gắn âm thanh: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print(f"⚠️ Không tìm thấy file âm thanh: {self.nhac_wav}")
 
-        return video
+        return final_video
+
 
 
 def main():
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    loi = os.path.join(base_dir, "loi_test.wav")
-    nhac = os.path.join(base_dir, "nhac_test.wav")
-    lyrics = os.path.join(base_dir, "lyrics_test.json")
+    loi = os.path.join(base_dir, "loi.wav")
+    nhac = os.path.join(base_dir, "nhac.wav")
+    lyrics = os.path.join(base_dir, "lyrics.json")
     bg = os.path.join(base_dir, "anh.jpg")
 
     # Kiểm tra file đầu vào
@@ -316,16 +393,30 @@ def main():
         kara = AutoKaraoke(loi, nhac, lyrics, bg)
         words = kara.transcribe()
         
-        # Lấy duration từ file nhạc
+        # Lấy duration từ file nhạc và đảm bảo chính xác
         audio_clip = AudioFileClip(nhac)
         duration = audio_clip.duration
+        print(f"📊 File nhạc duration: {duration:.2f}s")
         audio_clip.close()
         
         video = kara.make_video(words, duration)
         
         output_file = "karaoke_final.mp4"
         print(f"🎬 Đang xuất video: {output_file}")
-        video.write_videofile(output_file, fps=FPS, codec="libx264", audio_codec="aac")
+        
+        # Xuất video với thông số tối ưu
+        video.write_videofile(
+            output_file, 
+            fps=FPS, 
+            codec="libx264", 
+            audio_codec="aac",
+            temp_audiofile='temp-audio.m4a',
+            remove_temp=True,
+            verbose=False,  # Giảm log để dễ debug
+            logger=None
+        )
+        
+        # Đóng video để giải phóng memory
         video.close()
         
         print(f"✅ Hoàn thành! Video đã được lưu: {output_file}")

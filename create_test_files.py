@@ -116,15 +116,15 @@ def main():
     print("🎵 Đang tạo file test...")
     
     # Tạo các file âm thanh
-    create_background_music("nhac.wav", duration=10)
-    create_vocal_track("loi.wav", duration=10)
-    
+    create_background_music("nhac_test.wav", duration=10)
+    create_vocal_track("loi_test.wav", duration=10)
+
     # Tạo file lyrics
     create_test_lyrics()
     
     print("\n✅ Hoàn thành! Đã tạo:")
-    print("  - nhac.wav (nhạc nền 10s)")
-    print("  - loi.wav (vocal 10s)")
+    print("  - nhac_test.wav (nhạc nền 10s)")
+    print("  - loi_test.wav (vocal 10s)")
     print("  - lyrics_test.json (lời bài hát ngắn)")
     
     print("\n📋 Để test karaoke:")
