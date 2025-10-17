@@ -1,0 +1,28 @@
+# Audio processing
+pydub
+librosa
+soundfile
+numpy
+scipy
+
+# Speech recognition
+whisper
+openai-whisper
+SpeechRecognition
+
+# Vocal separation
+demucs
+
+# Video creation & editing
+moviepy
+opencv-python
+Pillow
+imageio[ffmpeg]
+
+# Deep learning
+torch
+torchaudio
+
+# Utilities
+tqdm
+requests
