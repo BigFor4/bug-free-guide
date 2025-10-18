@@ -285,15 +285,18 @@ class AutoKaraoke:
             else:
                 return np.array(img)
 
-        # *** LOGIC KARAOKE CHUẨN VIDEO KARAOKE THẬT ***
-        # Tìm câu đang hát và câu tiếp theo
+        # *** LOGIC KARAOKE 2 DÒNG LUÂN PHIÊN - KHÔNG BAO GIỜ NHẢY VỊ TRÍ ***
+        # Quy tắc: Câu lẻ (index 0,2,4...) hát ở DÒNG 1
+        #          Câu chẵn (index 1,3,5...) hát ở DÒNG 2
+        # Khi hết câu, text mới xuất hiện ở dòng còn lại
+        
+        # Tìm câu đang hát hoặc sắp hát
         current_idx = None
         for i, line in enumerate(lines):
             if line["start"] <= t <= line["end"]:
                 current_idx = i
                 break
         
-        # Nếu không có câu đang hát, tìm câu sắp hát
         if current_idx is None:
             for i, line in enumerate(lines):
                 if t < line["start"]:
@@ -303,7 +306,7 @@ class AutoKaraoke:
         if current_idx is not None:
             current_line = lines[current_idx]
             
-            # Xử lý dòng break (3 chấm giữa các section)
+            # Xử lý dòng break (3 chấm)
             if current_line.get("is_break"):
                 dot_phase = (t * 2) % 3
                 dots = []
@@ -323,61 +326,94 @@ class AutoKaraoke:
                 else:
                     return np.array(img)
             
-            # *** LOGIC 2 DÒNG KARAOKE CHUẨN ***
-            # Dòng 1 (line1_y): Hiển thị câu TIẾP THEO sẽ được hát (màu trắng mờ)
-            # Dòng 2 (line2_y): Hiển thị câu ĐANG HÁT với highlight (vàng/trắng)
+            # Xác định dòng nào sẽ hiển thị câu này (dựa vào index)
+            # Lọc bỏ các dòng break để đếm chính xác
+            non_break_lines = [l for l in lines if not l.get("is_break")]
+            try:
+                actual_idx = non_break_lines.index(current_line)
+            except ValueError:
+                actual_idx = current_idx
             
-            is_currently_singing = (current_line["start"] <= t <= current_line["end"])
+            is_odd_line = (actual_idx % 2 == 0)  # Index 0,2,4... là câu lẻ
+            current_y = self.line1_y if is_odd_line else self.line2_y
             
-            if is_currently_singing:
-                # ĐANG HÁT: Dòng 2 là câu hiện tại, Dòng 1 là câu tiếp theo
-                
-                # Dòng 2: Câu đang hát với highlight karaoke
-                self.draw_karaoke_line(draw, current_line, t, self.line2_y, font, 255, has_background)
-                
-                # Dòng 1: Hiển thị câu tiếp theo (nếu có)
-                if current_idx + 1 < len(lines):
-                    next_line = lines[current_idx + 1]
-                    if not next_line.get("is_break"):
-                        # Fade in hiệu ứng cho câu tiếp theo
-                        elapsed_in_current = t - current_line["start"]
-                        duration_current = current_line["end"] - current_line["start"]
-                        fade_progress = elapsed_in_current / duration_current
+            is_singing = (current_line["start"] <= t <= current_line["end"])
+            
+            # ========== VẼ CÂU HIỆN TẠI ==========
+            if is_singing:
+                # Đang hát - highlight với timing chính xác
+                self.draw_karaoke_line(draw, current_line, t, current_y, font, 255, has_background)
+            else:
+                # Chưa hát - fade in
+                time_until_start = current_line["start"] - t
+                if time_until_start <= 2:
+                    fade_progress = (2 - time_until_start) / 2
+                    alpha = int(255 * fade_progress)
+                    self.draw_text_centered(draw, current_line["text"], current_y, font, 
+                                            (255, 255, 255), alpha, has_background)
+            
+            # ========== VẼ CÂU TIẾP THEO (ở dòng còn lại) ==========
+            if current_idx + 1 < len(lines):
+                next_line = lines[current_idx + 1]
+                if not next_line.get("is_break"):
+                    # Xác định dòng của câu tiếp theo
+                    try:
+                        next_actual_idx = non_break_lines.index(next_line)
+                    except ValueError:
+                        next_actual_idx = current_idx + 1
+                    
+                    is_next_odd = (next_actual_idx % 2 == 0)
+                    next_y = self.line1_y if is_next_odd else self.line2_y
+                    
+                    if is_singing:
+                        # Khi đang hát, bắt đầu fade in câu tiếp theo
+                        elapsed = t - current_line["start"]
+                        duration = current_line["end"] - current_line["start"]
+                        progress = elapsed / duration
                         
-                        # Bắt đầu fade in từ 50% thời gian của câu hiện tại
-                        if fade_progress >= 0.5:
-                            alpha = int(180 * ((fade_progress - 0.5) / 0.5))
-                        else:
-                            alpha = 0
+                        # Bắt đầu fade in từ 50% của câu hiện tại
+                        if progress >= 0.5:
+                            alpha = int(200 * ((progress - 0.5) / 0.5))
+                            self.draw_text_centered(draw, next_line["text"], next_y, font, 
+                                                    (200, 200, 200), alpha, has_background)
+                    else:
+                        # Chưa hát câu hiện tại, preview câu tiếp theo nhẹ nhàng
+                        time_until_current = current_line["start"] - t
+                        if time_until_current <= 1:
+                            alpha = int(120 * (1 - time_until_current))
+                            if alpha > 0:
+                                self.draw_text_centered(draw, next_line["text"], next_y, font, 
+                                                        (180, 180, 180), alpha, has_background)
+            
+            # ========== VẼ CÂU ĐÃ HÁT (ở dòng kia nếu có) ==========
+            # Hiển thị câu vừa hát xong trong 1-2 giây
+            if current_idx > 0 and is_singing:
+                prev_line = lines[current_idx - 1]
+                if not prev_line.get("is_break"):
+                    # Tính thời gian đã trôi qua kể từ khi hết câu trước
+                    time_since_prev = t - prev_line["end"]
+                    
+                    # Hiển thị trong 1.5 giây sau khi hết câu, rồi fade out
+                    if time_since_prev <= 1.5:
+                        try:
+                            prev_actual_idx = non_break_lines.index(prev_line)
+                        except ValueError:
+                            prev_actual_idx = current_idx - 1
+                        
+                        is_prev_odd = (prev_actual_idx % 2 == 0)
+                        prev_y = self.line1_y if is_prev_odd else self.line2_y
+                        
+                        # Fade out từ từ
+                        fade_out_progress = time_since_prev / 1.5
+                        alpha = int(150 * (1 - fade_out_progress))
                         
                         if alpha > 0:
-                            self.draw_text_centered(draw, next_line["text"], self.line1_y, font, 
-                                                    (200, 200, 200), alpha, has_background)
-            else:
-                # CHƯA HÁT ĐẾN: Hiển thị câu sắp hát với fade in
-                time_until_start = current_line["start"] - t
-                
-                if time_until_start <= 3:  # Bắt đầu hiển thị trước 3 giây
-                    fade_progress = (3 - time_until_start) / 3
-                    alpha = int(255 * fade_progress)
-                    
-                    # Hiển thị ở dòng 2 (vị trí karaoke chính)
-                    self.draw_text_centered(draw, current_line["text"], self.line2_y, font, 
-                                            (255, 255, 255), alpha, has_background)
-                    
-                    # Hiển thị câu tiếp theo ở dòng 1 nếu đủ gần
-                    if time_until_start <= 1.5 and current_idx + 1 < len(lines):
-                        next_line = lines[current_idx + 1]
-                        if not next_line.get("is_break"):
-                            next_alpha = int(120 * ((1.5 - time_until_start) / 1.5))
-                            if next_alpha > 0:
-                                self.draw_text_centered(draw, next_line["text"], self.line1_y, font, 
-                                                        (180, 180, 180), next_alpha, has_background)
+                            self.draw_text_centered(draw, prev_line["text"], prev_y, font, 
+                                                    (180, 180, 180), alpha, has_background)
         else:
-            # Không có câu nào - hiển thị 3 chấm chờ
-            dots_text = "●  ●  ●"
-            self.draw_text_centered(draw, dots_text, HEIGHT // 2, font, (255, 255, 255), 255, has_background)
-
+            # Không có câu nào
+            pass
+        
         # Xử lý final output
         if has_background:
             # Chuyển RGBA sang RGB để tương thích với MoviePy
@@ -447,9 +483,9 @@ def main():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     
     # Sử dụng file test để debug nhanh
-    loi = os.path.join(base_dir, "loi_test.wav")
-    nhac = os.path.join(base_dir, "nhac_test.wav")
-    lyrics = os.path.join(base_dir, "lyrics_test.json")
+    loi = os.path.join(base_dir, "loi.wav")
+    nhac = os.path.join(base_dir, "nhac.wav")
+    lyrics = os.path.join(base_dir, "lyrics.json")
     bg = os.path.join(base_dir, "anh.jpg")
 
     # Kiểm tra file đầu vào
